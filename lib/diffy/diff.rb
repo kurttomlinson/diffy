@@ -37,7 +37,8 @@ module Diffy
       if ! ['strings', 'files'].include?(@options[:source])
         raise ArgumentError, "Invalid :source option #{@options[:source].inspect}. Supported options are 'strings' and 'files'."
       end
-      @string1, @string2 = string1, string2
+      @string1 = string1
+      @string2 = string2
     end
 
     def diff
@@ -49,12 +50,15 @@ module Diffy
             [string1, string2]
           end
 
-        if WINDOWS
-          # don't use open3 on windows
+        case
+        when WINDOWS
+          # don't use open3 OR posix-spawn on windows
           cmd = sprintf '"%s" %s %s', diff_bin, diff_options.join(' '), paths.map { |s| %("#{s}") }.join(' ')
           diff = `#{cmd}`
-        else
+        when JRUBY
           diff = Open3.popen3(diff_bin, *(diff_options + paths)) { |i, o, e| o.read }
+        else
+          diff = POSIX::Spawn::Child.new(diff_bin, *(diff_options + paths)).out
         end
         diff.force_encoding('ASCII-8BIT') if diff.respond_to?(:valid_encoding?) && !diff.valid_encoding?
         if diff =~ /\A\s*\Z/ && !options[:allow_empty_diff]
@@ -115,12 +119,12 @@ module Diffy
     end
 
     def tempfile(string)
-      t = Tempfile.new('diffy')
+      t = Tempfile.new('diffy', :encoding => 'ascii-8bit')
       # ensure tempfiles aren't unlinked when GC runs by maintaining a
       # reference to them.
       @tempfiles ||=[]
       @tempfiles.push(t)
-      t.print(string)
+      t.print(string.force_encoding('ASCII-8BIT'))
       t.flush
       t.close
       t.path
